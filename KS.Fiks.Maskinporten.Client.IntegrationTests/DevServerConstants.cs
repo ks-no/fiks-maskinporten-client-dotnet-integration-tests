@@ -1,15 +1,36 @@
 using System;
-using System.Configuration;
 
 namespace KS.Fiks.Maskinporten.Client.IntegrationTests;
 
 public class DevServerConstants : ITestEnvironmentConstants
 {
-    public string IdPortenCertFile => Environment.GetEnvironmentVariable("MASKINPORTEN_CERT")
-                                      ?? throw new ConfigurationErrorsException("MASKINPORTEN_CERT_PWD environment variable not set");
+    private readonly string _idPortenCertFile;
+    private readonly string _idPortenCertPass;
 
-    public string IdPortenCertPass => Environment.GetEnvironmentVariable("MASKINPORTEN_CERT_PWD")
-                                      ?? throw new ConfigurationErrorsException("MASKINPORTEN_CERT_PWD environment variable not set");
+    public DevServerConstants()
+    {
+        _idPortenCertFile = Environment.GetEnvironmentVariable("MASKINPORTEN_CERT");
+        _idPortenCertPass = Environment.GetEnvironmentVariable("MASKINPORTEN_CERT_PWD");
+
+        ValidateEnvironmentVariables();
+    }
+
+    private void ValidateEnvironmentVariables()
+    {
+        if (string.IsNullOrEmpty(_idPortenCertFile))
+        {
+            throw new InvalidOperationException("Miljøvariabelen 'MASKINPORTEN_CERT' er ikke satt");
+        }
+
+        if (string.IsNullOrEmpty(_idPortenCertPass))
+        {
+            throw new InvalidOperationException("Miljøvariabelen 'MASKINPORTEN_CERT_PWD' er ikke satt");
+        }
+    }
+
+    public string IdPortenCertFile => _idPortenCertFile;
+
+    public string IdPortenCertPass => _idPortenCertPass;
 
     public string MaskinportenTokenEndpoint => @"https://test.maskinporten.no/token";
 
