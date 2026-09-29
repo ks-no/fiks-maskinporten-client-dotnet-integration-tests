@@ -1,0 +1,141 @@
+name: .NET Component Integration Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      componentVersion:
+        description: 'Component version to test (leave empty for project default)'
+        required: false
+        default: ''
+      componentPackageName:
+        description: 'Component package to test'
+        required: false
+        default: 'KS.Fiks.Maskinporten.Client'
+      clientOwner:
+        required: false
+        default: ''
+      clientRepo:
+        required: false
+        default: ''
+      clientSha:
+        required: false
+        default: ''
+      checkRunId:
+        required: false
+        default: ''
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: integration-tests
+  cancel-in-progress: false
+
+jobs:
+  integration-test:
+    name: Integration Tests (net8.0)
+    runs-on: [self-hosted, x64]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Get Component Version
+        id: version
+        uses: ks-no/github-actions-public/dotnet-get-component-version@main
+        with:
+          component-package-name: ${{ github.event.inputs.componentPackageName }}
+          component-version: ${{ github.event.inputs.componentVersion }}
+
+      - name: Add Specific Package Version
+        if: github.event.inputs.componentVersion != '' && github.event.inputs.componentPackageName != ''
+        uses: ks-no/github-actions-public/dotnet-add-package-version@main
+        with:
+          package-name: ${{ github.event.inputs.componentPackageName }}
+          package-version: ${{ github.event.inputs.componentVersion }}
+          no-restore: 'true'
+
+      - name: Prepare Maskinporten certificate
+        shell: bash
+        env:
+          MASKINPORTEN_CERT_B64: ${{ secrets.ID_PORTEN_TEST_CERT_P12_B64 }}
+        run: |
+          if [ -z "$MASKINPORTEN_CERT_B64" ]; then
+            echo "::error::ID_PORTEN_TEST_CERT_P12_B64 is required"
+            exit 1
+          fi
+          cert="$RUNNER_TEMP/maskinporten_test_cert.p12"
+          printf '%s' "$MASKINPORTEN_CERT_B64" | base64 --decode > "$cert"
+          chmod 600 "$cert"
+          echo "MASKINPORTEN_CERT=$cert" >> "$GITHUB_ENV"
+
+      - name: Run Integration Tests
+        uses: ks-no/github-actions-public/dotnet-integration-test@main
+        env:
+          MASKINPORTEN_CERT_PWD: ${{ secrets.ID_PORTEN_TEST_CERT_PWD }}
+        with:
+          artifactory-username: ${{ secrets.ARTIFACTORY_USERNAME }}
+          artifactory-password: ${{ secrets.ARTIFACTORY_PASSWORD }}
+          configuration: 'Debug'
+          test-args: '--no-restore --no-build --nologo --framework net8.0'
+
+      - name: Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: .NET Integration Tests (net8.0)
+          path: '**/*.trx'
+          reporter: dotnet-trx
+          fail-on-error: false
+
+      - name: Remove Maskinporten certificate
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/maskinporten_test_cert.p12"
+
+  update-check-run:
+    name: Update Check Run
+    needs: [integration-test]
+    if: always() && inputs.checkRunId != ''
+    runs-on: [self-hosted, x64]
+    timeout-minutes: 30
+    steps:
+      - id: setup-github-app
+        uses: ks-no/github-actions-public/setup-github-app@main
+        with:
+          ks_github_app_id: ${{ vars.KS_RUNNER_APP_ID }}
+          ks_github_app_private_key: ${{ secrets.KS_RUNNER_PRIVATE_KEY }}
+
+      - name: Update check run result
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ steps.setup-github-app.outputs.app_token }}
+          script: |
+            const success = '${{ needs.integration-test.result }}' === 'success';
+            await github.rest.checks.update({
+              owner:        '${{ inputs.clientOwner }}',
+              repo:         '${{ inputs.clientRepo }}',
+              check_run_id: Number('${{ inputs.checkRunId }}'),
+              status:       'completed',
+              conclusion:   success ? 'success' : 'failure',
+              completed_at: new Date().toISOString(),
+              output: {
+                title:   'Integration Tests',
+                summary: success
+                  ? 'All integration tests passed.'
+                  : `Integration tests failed. See ${context.serverUrl}/ks-no/fiks-maskinporten-client-dotnet-integration-tests/actions/runs/${context.runId}`
+              }
+            });
