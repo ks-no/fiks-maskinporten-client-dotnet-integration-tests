@@ -15,7 +15,7 @@ public sealed class MaskinportenClientFixture : IDisposable
     public MaskinportenClientFixture()
     {
         _testEnvironmentConstants = new DevServerConstants();
-        _certificate = new X509Certificate2(
+        _certificate = X509CertificateLoader.LoadPkcs12FromFile(
             _testEnvironmentConstants.IdPortenCertFile,
             _testEnvironmentConstants.IdPortenCertPass,
             X509KeyStorageFlags.EphemeralKeySet);
@@ -35,7 +35,7 @@ public sealed class MaskinportenClientFixture : IDisposable
 
     public MaskinportenClientFixture WithUnauthorizedCertificate()
     {
-        _certificate = new X509Certificate2(
+        _certificate = X509CertificateLoader.LoadPkcs12FromFile(
             "alice-virksomhetssertifikat.p12",
             "PASSWORD",
             X509KeyStorageFlags.EphemeralKeySet);
